@@ -6,6 +6,6 @@ export async function GET(req: NextRequest) {
   const status = searchParams.get('status') || 'all';
   const search = searchParams.get('search') || '';
 
-  const requests = getAllWatchRequests({ status, search });
+  const requests = await getAllWatchRequests({ status, search });
   return NextResponse.json({ requests });
 }

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createWatchRequest } from '@/lib/db';
+import { createWatchRequest, updateWatchRequest } from '@/lib/db';
 import { checkInstagramStatus } from '@/lib/instagram';
 
 export async function POST(req: NextRequest) {
@@ -14,7 +14,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 유효성 검사
+    // 인스타그램 아이디 유효성 검사 (영문, 숫자, ., _, 점 허용 / 최대 30자)
     const instagramUsernameRegex = /^[a-zA-Z0-9._]{1,30}$/;
     const cleanTarget = target_username.replace('@', '').trim();
     const cleanUser = user_username.replace('@', '').trim();
@@ -33,24 +33,18 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 신청 등록
-    const record = createWatchRequest(cleanTarget, cleanUser);
+    const record = await createWatchRequest(cleanTarget, cleanUser);
 
-    // 초기 상태 체크 (비동기, 응답 후 처리)
-    checkInstagramStatus(cleanTarget).then((status) => {
-      const { updateWatchRequest } = require('@/lib/db');
-      updateWatchRequest(record.id, {
+    // 초기 상태 체크 (백그라운드)
+    checkInstagramStatus(cleanTarget).then(async (status) => {
+      await updateWatchRequest(record.id, {
         initial_status: status,
         current_status: status,
         last_checked_at: new Date().toISOString(),
       });
     }).catch(console.error);
 
-    return NextResponse.json({
-      success: true,
-      id: record.id,
-      message: '등록이 완료되었습니다.',
-    });
+    return NextResponse.json({ success: true, id: record.id });
   } catch (error) {
     console.error('Register error:', error);
     return NextResponse.json(
