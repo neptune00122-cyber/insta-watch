@@ -14,7 +14,6 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 인스타그램 아이디 유효성 검사 (영문, 숫자, ., _, 점 허용 / 최대 30자)
     const instagramUsernameRegex = /^[a-zA-Z0-9._]{1,30}$/;
     const cleanTarget = target_username.replace('@', '').trim();
     const cleanUser = user_username.replace('@', '').trim();

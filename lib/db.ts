@@ -1,4 +1,4 @@
-import { kv } from '@vercel/kv';
+import { getSupabase } from './supabase';
 
 export interface WatchRequest {
   id: number;
@@ -7,107 +7,113 @@ export interface WatchRequest {
   initial_status: 'private' | 'public' | 'unknown' | 'failed';
   current_status: 'private' | 'public' | 'unknown' | 'failed';
   last_checked_at: string | null;
-  notification_sent: number;
+  notification_sent: boolean;
   notified_at: string | null;
   created_at: string;
-}
-
-// 고유 ID 생성
-async function getNextId(): Promise<number> {
-  const id = await kv.incr('watch:next_id');
-  return id;
 }
 
 export async function createWatchRequest(
   target_instagram_username: string,
   user_instagram_username: string
 ): Promise<WatchRequest> {
-  const id = await getNextId();
-  const now = new Date().toISOString();
+  const supabase = getSupabase();
+  const { data, error } = await supabase
+    .from('watch_requests')
+    .insert({
+      target_instagram_username: target_instagram_username.toLowerCase().replace('@', ''),
+      user_instagram_username: user_instagram_username.toLowerCase().replace('@', ''),
+      initial_status: 'unknown',
+      current_status: 'unknown',
+      notification_sent: false,
+    })
+    .select()
+    .single();
 
-  const record: WatchRequest = {
-    id,
-    target_instagram_username: target_instagram_username.toLowerCase().replace('@', ''),
-    user_instagram_username: user_instagram_username.toLowerCase().replace('@', ''),
-    initial_status: 'unknown',
-    current_status: 'unknown',
-    last_checked_at: null,
-    notification_sent: 0,
-    notified_at: null,
-    created_at: now,
-  };
-
-  // 개별 레코드 저장
-  await kv.set(`watch:req:${id}`, JSON.stringify(record));
-  // 전체 ID 목록에 추가
-  await kv.zadd('watch:ids', { score: id, member: String(id) });
-
-  return record;
+  if (error) throw new Error(`DB insert 오류: ${error.message}`);
+  return data as WatchRequest;
 }
 
 export async function getAllWatchRequests(filters?: {
   status?: string;
   search?: string;
 }): Promise<WatchRequest[]> {
-  // 전체 ID 목록 조회 (최신순)
-  const ids = await kv.zrange('watch:ids', 0, -1, { rev: true });
-  if (!ids || ids.length === 0) return [];
-
-  // 각 레코드 조회
-  const keys = (ids as string[]).map(id => `watch:req:${id}`);
-  const records = await kv.mget<string[]>(...keys);
-
-  let results: WatchRequest[] = records
-    .filter(Boolean)
-    .map(r => JSON.parse(r as string) as WatchRequest);
+  const supabase = getSupabase();
+  let query = supabase
+    .from('watch_requests')
+    .select('*')
+    .order('created_at', { ascending: false });
 
   if (filters?.status && filters.status !== 'all') {
-    results = results.filter(r => r.current_status === filters.status);
+    query = query.eq('current_status', filters.status);
   }
 
   if (filters?.search) {
     const q = filters.search.toLowerCase();
-    results = results.filter(
-      r =>
-        r.target_instagram_username.includes(q) ||
-        r.user_instagram_username.includes(q)
+    query = query.or(
+      `target_instagram_username.ilike.%${q}%,user_instagram_username.ilike.%${q}%`
     );
   }
 
-  return results;
+  const { data, error } = await query;
+  if (error) throw new Error(`DB select 오류: ${error.message}`);
+  return (data || []) as WatchRequest[];
 }
 
 export async function getWatchRequestById(id: number): Promise<WatchRequest | null> {
-  const raw = await kv.get<string>(`watch:req:${id}`);
-  if (!raw) return null;
-  return JSON.parse(raw as string) as WatchRequest;
+  const supabase = getSupabase();
+  const { data, error } = await supabase
+    .from('watch_requests')
+    .select('*')
+    .eq('id', id)
+    .single();
+
+  if (error) return null;
+  return data as WatchRequest;
 }
 
 export async function updateWatchRequest(
   id: number,
   updates: Partial<WatchRequest>
 ): Promise<WatchRequest | null> {
-  const existing = await getWatchRequestById(id);
-  if (!existing) return null;
+  const supabase = getSupabase();
+  const { data, error } = await supabase
+    .from('watch_requests')
+    .update(updates)
+    .eq('id', id)
+    .select()
+    .single();
 
-  const updated = { ...existing, ...updates };
-  await kv.set(`watch:req:${id}`, JSON.stringify(updated));
-  return updated;
+  if (error) throw new Error(`DB update 오류: ${error.message}`);
+  return data as WatchRequest;
 }
 
 export async function getPendingRequests(): Promise<WatchRequest[]> {
-  const all = await getAllWatchRequests();
-  return all.filter(r => r.current_status !== 'public' && r.notification_sent === 0);
+  const supabase = getSupabase();
+  const { data, error } = await supabase
+    .from('watch_requests')
+    .select('*')
+    .neq('current_status', 'public')
+    .eq('notification_sent', false);
+
+  if (error) throw new Error(`DB select 오류: ${error.message}`);
+  return (data || []) as WatchRequest[];
 }
 
 export async function getStats() {
-  const all = await getAllWatchRequests();
+  const supabase = getSupabase();
+  const { data, error } = await supabase
+    .from('watch_requests')
+    .select('current_status, notification_sent');
+
+  if (error) throw new Error(`DB stats 오류: ${error.message}`);
+  const all = data || [];
+
   return {
     total: all.length,
     private: all.filter(r => r.current_status === 'private').length,
     public: all.filter(r => r.current_status === 'public').length,
     unknown: all.filter(r => r.current_status === 'unknown').length,
     failed: all.filter(r => r.current_status === 'failed').length,
-    notified: all.filter(r => r.notification_sent === 1).length,
+    notified: all.filter(r => r.notification_sent === true).length,
   };
 }

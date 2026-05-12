@@ -29,9 +29,15 @@ export async function runMonitorCycle() {
         if (newStatus !== request.current_status) stats.statusChanged++;
 
         if (becamePublic && !request.notification_sent) {
-          const ok = await sendNotificationDM(request.user_instagram_username, request.target_instagram_username);
+          const ok = await sendNotificationDM(
+            request.user_instagram_username,
+            request.target_instagram_username
+          );
           if (ok) {
-            await updateWatchRequest(request.id, { notification_sent: 1, notified_at: now });
+            await updateWatchRequest(request.id, {
+              notification_sent: true,
+              notified_at: now,
+            });
             stats.notified++;
           } else {
             stats.errors++;
@@ -41,12 +47,17 @@ export async function runMonitorCycle() {
         await new Promise(r => setTimeout(r, 2000));
       } catch (err) {
         stats.errors++;
-        await updateWatchRequest(request.id, { current_status: 'failed', last_checked_at: new Date().toISOString() });
+        console.error(`[Monitor] 오류 (id: ${request.id}):`, err);
+        await updateWatchRequest(request.id, {
+          current_status: 'failed',
+          last_checked_at: new Date().toISOString(),
+        });
       }
     }
   } finally {
     isRunning = false;
   }
 
+  console.log(`[Monitor] 완료:`, stats);
   return stats;
 }
